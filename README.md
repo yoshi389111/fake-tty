@@ -10,6 +10,12 @@ fake-tty is a tool that runs commands in a pseudo terminal (pty), making them be
 - Reproduce terminal-specific behavior
 - Useful for scripting and automation
 
+## Requirements
+
+- C compiler (e.g., `gcc 4.0+`)
+- C Standard Library (e.g., `glibc 2.3+`)
+- Make utility
+
 ## Installation
 
 ```sh
@@ -28,7 +34,7 @@ fake-tty <command> [args...]
 
 Example:
 
-```
+```console
 $ ls
 file1.txt  file2.txt  dir1/  dir2/
 $ ls | cat
@@ -39,9 +45,6 @@ dir2/
 $ ./fake-tty ls | cat
 file1.txt  file2.txt  dir1/  dir2/
 ```
-
-> [!CAUTION]
-> Do not run commands that change terminal settings, such as vi or less.
 
 ## Options
 
@@ -54,4 +57,4 @@ file1.txt  file2.txt  dir1/  dir2/
 
 MIT License
 
-Copyright (C) 2002-2025 SATO, Yoshiyuki
+Copyright &copy; 2002-2025 SATO, Yoshiyuki
