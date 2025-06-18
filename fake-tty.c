@@ -43,100 +43,22 @@ static const char version_info[] = "@(#)$Header: fake-tty 0.4.0 2002-03-18/2025-
 /** Flag for window size change. */
 volatile sig_atomic_t g_winch_flag = 0;
 
+/** Flag for exit signal. */
+volatile sig_atomic_t g_exit_flag = 0;
+/** Exit signal number. */
+volatile sig_atomic_t g_exit_signo = 0;
+
 /** Original terminal settings for restoring later. */
 struct termios orig_term_info;
 
 /** Flag indicating whether the terminal needs to be restored. */
-volatile sig_atomic_t g_restore_term_info = 0;
+int g_restore_term_info = 0;
 
 /** master file descriptor, used in cleanup() */
 int g_master_fd = -1;
 
 /** slave file descriptor, used in cleanup() */
 int g_slave_fd = -1;
-
-/**
- * @brief Reads data from the specified file descriptor into the buffer.
- *
- * @param fd_in File descriptor for input.
- * @param buff Buffer to read data into.
- * @param buffsize Size of the buffer.
- * @return Number of bytes read, 0 on EOF.
- */
-ssize_t read_from_fd(int fd_in, char *buff, size_t buffsize)
-{
-    ssize_t ret;
-    do {
-        ret = read(fd_in, buff, buffsize);
-    } while (ret == -1 && errno == EINTR);
-
-    if (ret == 0) {
-        return 0; // EOF
-    } else if (ret == -1) {
-        if (errno == EIO) {
-            return 0; // EOF
-        }
-        perror("read()");
-        exit(EXIT_FAILURE_PARENT);
-    }
-
-    return ret;
-}
-
-/**
- * @brief Writes data from buffer to the specified file descriptor.
- *
- * @param fd_out File descriptor for output.
- * @param buff Buffer containing data to write.
- * @param len Length of data to write.
- * @return Number of bytes written, 0 on EOF.
- */
-ssize_t write_to_fd(int fd_out, const char *buff, ssize_t len)
-{
-    ssize_t written = 0;
-    while (written < len) {
-        ssize_t ret;
-        do {
-            ret = write(fd_out, buff + written, len - written);
-        } while (ret == -1 && errno == EINTR);
-
-        if (ret == 0) {
-            // Normally, write() never returns 0.
-            // But in case it does, treat as EOF to prevent infinite loop.
-            return 0; // EOF
-
-        } else if (ret == -1) {
-            if (errno == EIO) {
-                return 0; // EOF
-            }
-            perror("write()");
-            exit(EXIT_FAILURE_PARENT);
-        }
-        written += ret;
-    }
-    return written;
-}
-
-/**
- * @brief Relays data from one file descriptor to another.
- *
- * @param fd_in File descriptor for input.
- * @param fd_out File descriptor for output.
- * @return 1 on success, 0 on EOF.
- */
-int relay_fd_data(int fd_in, int fd_out)
-{
-    char buff[BUFFSIZE];
-    ssize_t len = read_from_fd(fd_in, buff, sizeof(buff));
-    if (len == 0) {
-        return 0; // EOF
-    }
-
-    if (write_to_fd(fd_out, buff, len) == 0) {
-        return 0; // EOF
-    }
-    return 1; // success
-}
 
 /**
  * @brief Cleans up file descriptors and restores terminal settings if needed.
@@ -172,6 +94,113 @@ void cleanup_and_exit(int exit_code)
 }
 
 /**
+ * @brief Reads data from the specified file descriptor into the buffer.
+ *
+ * @param fd_in File descriptor for input.
+ * @param buff Buffer to read data into.
+ * @param buffsize Size of the buffer.
+ * @return Number of bytes read, 0 on EOF.
+ */
+ssize_t read_from_fd(int fd_in, char *buff, size_t buffsize)
+{
+    ssize_t ret;
+    do {
+        ret = read(fd_in, buff, buffsize);
+    } while (ret == -1 && errno == EINTR);
+
+    if (ret == 0) {
+        return 0; // EOF
+    } else if (ret == -1) {
+        if (errno == EIO) {
+            return 0; // EOF
+        }
+        perror("read()");
+        cleanup_and_exit(EXIT_FAILURE_PARENT);
+    }
+
+    return ret;
+}
+
+/**
+ * @brief Writes data from buffer to the specified file descriptor.
+ *
+ * @param fd_out File descriptor for output.
+ * @param buff Buffer containing data to write.
+ * @param len Length of data to write.
+ * @return Number of bytes written, 0 on EOF.
+ */
+ssize_t write_to_fd(int fd_out, const char *buff, ssize_t len)
+{
+    ssize_t written = 0;
+    while (written < len) {
+        ssize_t ret;
+        do {
+            ret = write(fd_out, buff + written, len - written);
+        } while (ret == -1 && errno == EINTR);
+
+        if (ret == 0) {
+            // Normally, write() never returns 0.
+            // But in case it does, treat as EOF to prevent infinite loop.
+            return 0; // EOF
+
+        } else if (ret == -1) {
+            if (errno == EIO) {
+                return 0; // EOF
+            }
+            perror("write()");
+            cleanup_and_exit(EXIT_FAILURE_PARENT);
+        }
+        written += ret;
+    }
+    return written;
+}
+
+/**
+ * @brief Relays data from one file descriptor to another.
+ *
+ * @param fd_in File descriptor for input.
+ * @param fd_out File descriptor for output.
+ * @return 1 on success, 0 on EOF.
+ */
+int relay_fd_data(int fd_in, int fd_out)
+{
+    char buff[BUFFSIZE];
+    ssize_t len = read_from_fd(fd_in, buff, sizeof(buff));
+    if (len == 0) {
+        return 0; // EOF
+    }
+
+    if (write_to_fd(fd_out, buff, len) == 0) {
+        return 0; // EOF
+    }
+    return 1; // success
+}
+
+/**
+ * @brief Cleans up file descriptors and exits the child process with the given code.
+ *
+ * @param exit_code Exit status code.
+ */
+void cleanup_and_exit_child(int exit_code)
+{
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    if (g_master_fd != -1) {
+        close(g_master_fd);
+        g_master_fd = -1;
+    }
+
+    if (g_slave_fd != -1) {
+        close(g_slave_fd);
+        g_slave_fd = -1;
+    }
+
+    exit(exit_code);
+}
+
+/**
  * @brief Sets up the child process side of the pseudo terminal and executes the command.
  *
  * @param argv Command line arguments for execvp().
@@ -181,50 +210,44 @@ void child_side(char* argv[])
     // new session leader
     if (setsid() == -1) {
         perror("setsid()");
-        cleanup_and_exit(EXIT_FAILURE_CHILD);
+        cleanup_and_exit_child(EXIT_FAILURE_CHILD);
     }
 
     // set controlling terminal
     if (ioctl(g_slave_fd, TIOCSCTTY, 0) == -1) {
         perror("ioctl(TIOCSCTTY)");
-        cleanup_and_exit(EXIT_FAILURE_CHILD);
+        cleanup_and_exit_child(EXIT_FAILURE_CHILD);
     }
 
     // slave -> stdin(child)
     if (dup2(g_slave_fd, STDIN_FILENO) == -1) {
         perror("dup2(STDIN)");
-        cleanup_and_exit(EXIT_FAILURE_CHILD);
+        cleanup_and_exit_child(EXIT_FAILURE_CHILD);
     }
 
     // stdout(child) -> slave
     if (dup2(g_slave_fd, STDOUT_FILENO) == -1) {
         perror("dup2(STDOUT)");
-        close(STDIN_FILENO);
-        cleanup_and_exit(EXIT_FAILURE_CHILD);
+        cleanup_and_exit_child(EXIT_FAILURE_CHILD);
     }
 
     // stderr(child) -> slave
     if (dup2(g_slave_fd, STDERR_FILENO) == -1) {
         perror("dup2(STDERR)");
-        close(STDIN_FILENO);
-        close(STDOUT_FILENO);
-        cleanup_and_exit(EXIT_FAILURE_CHILD);
+        cleanup_and_exit_child(EXIT_FAILURE_CHILD);
     }
 
     if (close(g_slave_fd) == -1) {
         perror("close(slave)");
         g_slave_fd = -1;
-        close(STDIN_FILENO);
-        close(STDOUT_FILENO);
-        close(STDERR_FILENO);
-        exit(EXIT_FAILURE_CHILD);
+        cleanup_and_exit_child(EXIT_FAILURE_CHILD);
     }
     g_slave_fd = -1;
 
     // undocumented, but always argv[argc] == NULL
     execvp(argv[0], argv);
     perror("execvp()");
-    exit(EXIT_COMMAND_NOT_FOUND);
+    cleanup_and_exit_child(EXIT_COMMAND_NOT_FOUND);
 }
 
 /**
@@ -235,7 +258,13 @@ void parent_side()
 {
     int maxfd = g_master_fd > STDIN_FILENO ? g_master_fd : STDIN_FILENO;
     int stdin_eof = 0;
-    while (!stdin_eof) {
+    while (1) {
+        if (g_exit_flag) {
+            cleanup();
+            signal(g_exit_signo, SIG_DFL);
+            raise(g_exit_signo);
+        }
+
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(g_master_fd, &fds);
@@ -249,7 +278,7 @@ void parent_side()
                 continue;
             }
             perror("select()");
-            exit(EXIT_FAILURE_PARENT);
+            cleanup_and_exit(EXIT_FAILURE_PARENT);
         }
 
         if (g_winch_flag) {
@@ -259,7 +288,7 @@ void parent_side()
                 int fd_slave_for_winsz = open(ptsname(g_master_fd), O_WRONLY | O_NOCTTY);
                 if (fd_slave_for_winsz == -1) {
                     perror("open(slave for winsz)");
-                    exit(EXIT_FAILURE_PARENT);
+                    cleanup_and_exit(EXIT_FAILURE_PARENT);
                 }
                 ioctl(fd_slave_for_winsz, TIOCSWINSZ, &size_info);
                 close(fd_slave_for_winsz);
@@ -305,9 +334,8 @@ void sigwinch_handler(int signo __attribute__((unused)))
  */
 void sig_restore_handler(int signo)
 {
-    cleanup();
-    signal(signo, SIG_DFL);
-    raise(signo);
+    g_exit_flag = 1;
+    g_exit_signo = signo;
 }
 
 /**
@@ -322,26 +350,26 @@ int main(int argc, char*argv[])
     // check arguments
     if (argc < 2) {
         fprintf(stderr, "usage: %s command [args ...]\n", argv[0]);
-        exit(EXIT_FAILURE_PARENT);
+        cleanup_and_exit(EXIT_FAILURE_PARENT);
     }
 
     // check help. -h or --help
     if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
         printf("usage: %s command [args ...]\n", argv[0]);
-        exit(EXIT_SUCCESS);
+        cleanup_and_exit(EXIT_SUCCESS);
     }
 
     // check version. -V/-v or --version
     if (strcasecmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
         printf("%s\n", version_info);
-        exit(EXIT_SUCCESS);
+        cleanup_and_exit(EXIT_SUCCESS);
     }
 
     // open pty-master
     g_master_fd = posix_openpt(O_RDWR);
     if (g_master_fd == -1) {
         perror("open(master)");
-        exit(EXIT_FAILURE_PARENT);
+        cleanup_and_exit(EXIT_FAILURE_PARENT);
     }
 
     // grant access to pty-slave
@@ -367,7 +395,7 @@ int main(int argc, char*argv[])
     g_slave_fd = open(slave_name, O_RDWR);
     if (g_slave_fd == -1) {
         perror("open(slave)");
-        cleanup_and_exit( EXIT_FAILURE_PARENT);
+        cleanup_and_exit(EXIT_FAILURE_PARENT);
     }
 
     if (isatty(STDIN_FILENO)) {
@@ -450,12 +478,13 @@ int main(int argc, char*argv[])
         if (close(g_master_fd) == -1) {
             perror("close(master)");
             g_master_fd = -1;
-            exit(EXIT_FAILURE_CHILD);
+            cleanup_and_exit_child(EXIT_FAILURE_CHILD);
         }
         g_master_fd = -1;
         // skip argv[0] (program name)
         child_side(argv + 1);
-        exit(EXIT_FAILURE_CHILD);
+        // UNREACHABLE
+        cleanup_and_exit_child(EXIT_FAILURE_CHILD);
     }
 
     // parent process side
@@ -479,9 +508,11 @@ int main(int argc, char*argv[])
         cleanup_and_exit(EXIT_FAILURE_PARENT);
     }
     if (WIFEXITED(status)) {
-        exit(WEXITSTATUS(status));
+        cleanup_and_exit(WEXITSTATUS(status));
     } else if (WIFSIGNALED(status)) {
-        exit(128 + WTERMSIG(status)); // exit code 128 + signal number
+        // exit code 128 + signal number
+        cleanup_and_exit(128 + WTERMSIG(status));
     }
-    exit(EXIT_FAILURE_PARENT);
+    // UNREACHABLE
+    cleanup_and_exit(EXIT_FAILURE_PARENT);
 }
