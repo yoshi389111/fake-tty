@@ -16,12 +16,13 @@
  *
  * @copyright Copyright (C) 2002-2025 SATO, Yoshiyuki
  */
-static const char version_info[] = "@(#)$Header: fake-tty 0.5.0 2002-03-18/2025-06-19 yoshi389111 Exp $";
+static const char version_info[] = "@(#)$Header: fake-tty 0.5.1 2002-03-18/2025-06-20 yoshi389111 Exp $";
 
 #define _XOPEN_SOURCE 600 // POSIX.1-2001
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,23 +142,30 @@ void handle_exit_signal(int signo)
  */
 ssize_t read_data(int fd_in, char *buff, size_t buffsize)
 {
-    ssize_t ret;
-    do {
+    while (1) {
         check_exit_signal();
-        ret = read(fd_in, buff, buffsize);
-    } while (ret == -1 && errno == EINTR);
 
-    if (ret == 0) {
-        return 0; // EOF
-    } else if (ret == -1) {
-        if (errno == EIO) {
+        ssize_t ret = read(fd_in, buff, buffsize);
+
+        if (ret == -1 && errno == EINTR) {
+            // interrupted by signal, retry
+            continue;
+
+        } else if (ret == -1 && errno == EIO) {
+            // EIO indicates EOF on a pipe or socket
             return 0; // EOF
-        }
-        PERROR("read()");
-        exit(EXIT_FAILURE_PARENT);
-    }
 
-    return ret;
+        } else if (ret == -1) {
+            PERROR("read()");
+            exit(EXIT_FAILURE_PARENT);
+
+        } else if (ret == 0) {
+            return 0; // EOF
+
+        } else {
+            return ret;
+        }
+    }
 }
 
 /**
@@ -172,24 +180,28 @@ ssize_t write_data(int fd_out, const char *buff, ssize_t len)
 {
     ssize_t written = 0;
     while (written < len) {
-        ssize_t ret;
-        do {
-            check_exit_signal();
-            ret = write(fd_out, buff + written, len - written);
-        } while (ret == -1 && errno == EINTR);
+        check_exit_signal();
 
-        if (ret == 0) {
-            // Normally, write() never returns 0.
-            // But in case it does, treat as EOF to prevent infinite loop.
+        ssize_t ret = write(fd_out, buff + written, len - written);
+
+        if (ret == -1 && errno == EINTR) {
+            // interrupted by signal, retry
+            continue;
+
+        } else if (ret == -1 && errno == EIO) {
+            // EIO indicates EOF on a pipe or socket
             return 0; // EOF
 
         } else if (ret == -1) {
-            if (errno == EIO) {
-                return 0; // EOF
-            }
             PERROR("write()");
             exit(EXIT_FAILURE_PARENT);
+
+        } else if (ret == 0) {
+            // Normally, write() never returns 0.
+            // But in case it does, treat as EOF to prevent infinite loop.
+            return 0; // EOF
         }
+
         written += ret;
     }
     return written;
@@ -273,60 +285,75 @@ void child_side(char* argv[])
 }
 
 /**
+ * @brief Changes the window size of the slave pseudo terminal.
+ *
+ * Note:
+ * The slave fd is opened and closed each time in this function.
+ * This is because if the parent process keeps the slave fd open,
+ * it cannot detect EOF when the child process side closes its end.
+ */
+void check_win_size_change()
+{
+    if (g_winch_flag) {
+        // handle window size change
+        struct winsize size_info;
+        if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size_info) == 0) {
+            int fd_slave_for_winsz = open(ptsname(g_master_fd), O_WRONLY | O_NOCTTY);
+            if (fd_slave_for_winsz == -1) {
+                PERROR("open(slave for winsz)");
+                exit(EXIT_FAILURE_PARENT);
+            }
+            ioctl(fd_slave_for_winsz, TIOCSWINSZ, &size_info);
+            close(fd_slave_for_winsz);
+        }
+        g_winch_flag = 0; // reset flag
+    }
+}
+
+/**
  * @brief Handles the parent process side of the pseudo terminal,
  * relaying data between the terminal and the process.
  */
 void parent_side()
 {
-    int maxfd = g_master_fd > STDIN_FILENO ? g_master_fd : STDIN_FILENO;
     int is_stdin_closed = 0;
     while (1) {
         check_exit_signal();
+        check_win_size_change();
 
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(g_master_fd, &fds);
+        struct pollfd pfds[2];
+        pfds[0].fd = g_master_fd;
+        pfds[0].events = POLLIN;
+        int nfds = 1;
+
         if (!is_stdin_closed) {
-            FD_SET(STDIN_FILENO, &fds);
+            pfds[1].fd = STDIN_FILENO;
+            pfds[1].events = POLLIN;
+            nfds = 2;
         }
 
-        if (select(maxfd + 1, &fds, NULL, NULL, NULL) == -1) {
+        if (poll(pfds, nfds, -1) == -1) {
             if (errno == EINTR) {
-                // interrupted by signal, retry select
+                // interrupted by signal, retry
                 continue;
             }
-            PERROR("select()");
+            PERROR("poll()");
             exit(EXIT_FAILURE_PARENT);
         }
 
-        if (g_winch_flag) {
-            // handle window size change
-            struct winsize size_info;
-            if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size_info) == 0) {
-                int fd_slave_for_winsz = open(ptsname(g_master_fd), O_WRONLY | O_NOCTTY);
-                if (fd_slave_for_winsz == -1) {
-                    PERROR("open(slave for winsz)");
-                    exit(EXIT_FAILURE_PARENT);
-                }
-                ioctl(fd_slave_for_winsz, TIOCSWINSZ, &size_info);
-                close(fd_slave_for_winsz);
-            }
-            g_winch_flag = 0; // reset flag
-        }
-
-        if (FD_ISSET(g_master_fd, &fds)) {
-            // master -> stdout(parent)
+        // master -> stdout(parent)
+        if ((pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
             if (relay_data(g_master_fd, STDOUT_FILENO) == 0) {
-                // EOF
+                // EOF or error
                 break;
             }
         }
 
-        if (!is_stdin_closed && FD_ISSET(STDIN_FILENO, &fds)) {
-            // stdin(parent) -> master
+        // stdin(parent) -> master
+        if (!is_stdin_closed && (pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
             if (relay_data(STDIN_FILENO, g_master_fd) == 0) {
-                // EOF
-                is_stdin_closed = 1; // mark stdin EOF
+                // EOF or error
+                is_stdin_closed = 1;
             }
         }
     }
