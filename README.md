@@ -12,6 +12,7 @@ fake-tty is a tool that runs commands in a pseudo terminal (pty), making them be
 
 ## Requirements
 
+- Linux (This program is Linux-only and does not support other operating systems.)
 - C compiler (e.g., `gcc 4.0+`)
 - C Standard Library (e.g., `glibc 2.3+`)
 - Make utility
