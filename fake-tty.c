@@ -37,7 +37,7 @@ static const char version_info[] = "@(#)$Header: fake-tty 0.5.0 2002-03-18/2025-
 
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
-#define PERROR(msg) perror( __FILE__ ":" TOSTRING(__LINE__) ": " msg )
+#define PERROR(msg) do { perror( __FILE__ ":" TOSTRING(__LINE__) ": " msg ); } while (0)
 
 #define EXIT_FAILURE_PARENT 1
 #define EXIT_FAILURE_CHILD 2
