@@ -430,7 +430,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    // open pty-master, pty-slave
+    // open pty master/slave and set terminal attributes and window size if attached to a terminal
     if (openpty(&g_master_fd, &g_slave_fd, NULL, p_termios, p_size_info) == -1) {
         PERROR("openpty()");
         exit(EXIT_FAILURE_PARENT);
