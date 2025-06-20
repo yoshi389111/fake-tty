@@ -40,18 +40,22 @@ static const char version_info[] = "@(#)$Header: fake-tty 0.5.2 2002-03-18/2025-
 #define PERROR(msg) do { perror( __FILE__ ":" TOSTRING(__LINE__) ": " msg ); } while (0)
 
 /** @brief Exit code for the parent process. */
-#define EXIT_FAILURE_PARENT 1
+#define EXIT_FAILURE_PARENT (1)
 /** @brief Exit code for the child process. */
-#define EXIT_FAILURE_CHILD 2
+#define EXIT_FAILURE_CHILD (2)
 /** @brief Exit code for command not found. */
-#define EXIT_COMMAND_NOT_FOUND 127
+#define EXIT_COMMAND_NOT_FOUND (127)
 /** @brief Buffer size for I/O operations. */
-#define BUFFSIZE 1024
+#define BUFFSIZE (1024)
+/** @brief Truthy value for boolean expressions. */
+#define TRUE (1)
+/** @brief Falsy value for boolean expressions. */
+#define FALSE (0)
 
 /** @brief Flag for window size change. */
-static volatile sig_atomic_t g_winch_flag = 0;
+static volatile sig_atomic_t g_winch_flag = FALSE;
 /** @brief Flag for exit signal. */
-static volatile sig_atomic_t g_exit_flag = 0;
+static volatile sig_atomic_t g_exit_flag = FALSE;
 /** @brief Exit signal number. */
 static volatile sig_atomic_t g_exit_signo = 0;
 
@@ -59,7 +63,7 @@ static volatile sig_atomic_t g_exit_signo = 0;
 static struct termios g_orig_termios;
 
 /** @brief Flag indicating whether the terminal needs to be restored. */
-static int g_is_term_restore_needed = 0;
+static int g_is_term_restore_needed = FALSE;
 
 /** @brief master file descriptor. */
 static int g_master_fd = -1;
@@ -68,12 +72,37 @@ static int g_master_fd = -1;
 static int g_slave_fd = -1;
 
 /** @brief Flag indicating whether the current process is the child process. */
-static int g_in_child = 0;
+static int g_in_child = FALSE;
+
+/** @brief File descriptor for the original terminal (if needed). */
+static int g_term_fd = -1;
+
+/** @brief Closes the master file descriptor. */
+static int close_master_fd()
+{
+    if (g_master_fd != -1) {
+        int ret = close(g_master_fd);
+        g_master_fd = -1;
+        return ret;
+    }
+    return 0;
+}
+
+/** @brief Closes the slave file descriptor. */
+static int close_slave_fd()
+{
+    if (g_slave_fd != -1) {
+        int ret = close(g_slave_fd);
+        g_slave_fd = -1;
+        return ret;
+    }
+    return 0;
+}
 
 /**
  * @brief Cleans up file descriptors and restores terminal settings if needed.
  */
-void cleanup()
+static void cleanup()
 {
     if (g_in_child) {
         // close the duplicated pseudo-terminal (only in child process)
@@ -81,21 +110,14 @@ void cleanup()
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
 
-    } else if (g_is_term_restore_needed) {
+    } else if (g_is_term_restore_needed && g_term_fd != -1) {
         // restore original terminal settings (only in parent process)
-        tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
-        g_is_term_restore_needed = 0;
+        tcsetattr(g_term_fd, TCSANOW, &g_orig_termios);
+        g_is_term_restore_needed = FALSE;
     }
 
-    if (g_master_fd != -1) {
-        close(g_master_fd);
-        g_master_fd = -1;
-    }
-
-    if (g_slave_fd != -1) {
-        close(g_slave_fd);
-        g_slave_fd = -1;
-    }
+    close_master_fd();
+    close_slave_fd();
 }
 
 /**
@@ -104,7 +126,7 @@ void cleanup()
  * This function should be called periodically in the main loop to check if an exit signal has been received.
  * If so, it cleans up resources and raises the signal again to terminate the process.
  */
-void check_exit_signal()
+static void check_exit_signal()
 {
     if (g_exit_flag) {
         cleanup();
@@ -119,9 +141,9 @@ void check_exit_signal()
  *
  * @param signo Signal number (unused).
  */
-void handle_sigwinch(int signo __attribute__((unused)))
+static void handle_sigwinch(int signo __attribute__((unused)))
 {
-    g_winch_flag = 1;
+    g_winch_flag = TRUE;
 }
 
 /**
@@ -129,9 +151,9 @@ void handle_sigwinch(int signo __attribute__((unused)))
  *
  * @param signo Signal number.
  */
-void handle_exit_signal(int signo)
+static void handle_exit_signal(int signo)
 {
-    g_exit_flag = 1;
+    g_exit_flag = TRUE;
     g_exit_signo = signo;
 }
 
@@ -143,9 +165,9 @@ void handle_exit_signal(int signo)
  * @param buffsize Size of the buffer.
  * @return Number of bytes read, 0 on EOF.
  */
-ssize_t read_data(int fd_in, char *buff, size_t buffsize)
+static ssize_t read_data(int fd_in, char *buff, size_t buffsize)
 {
-    while (1) {
+    while (TRUE) {
         check_exit_signal();
 
         ssize_t ret = read(fd_in, buff, buffsize);
@@ -179,7 +201,7 @@ ssize_t read_data(int fd_in, char *buff, size_t buffsize)
  * @param len Length of data to write.
  * @return Number of bytes written, 0 on EOF.
  */
-ssize_t write_data(int fd_out, const char *buff, ssize_t len)
+static ssize_t write_data(int fd_out, const char *buff, ssize_t len)
 {
     ssize_t written = 0;
     while (written < len) {
@@ -217,7 +239,7 @@ ssize_t write_data(int fd_out, const char *buff, ssize_t len)
  * @param fd_out File descriptor for output.
  * @return 1 on success, 0 on EOF.
  */
-int relay_data(int fd_in, int fd_out)
+static int relay_data(int fd_in, int fd_out)
 {
     char buff[BUFFSIZE];
     ssize_t len = read_data(fd_in, buff, sizeof(buff));
@@ -236,7 +258,7 @@ int relay_data(int fd_in, int fd_out)
  *
  * @param argv Command line arguments for execvp().
  */
-void child_side(char *argv[])
+static void child_side(char *argv[])
 {
     // new session leader
     if (setsid() == -1) {
@@ -274,12 +296,10 @@ void child_side(char *argv[])
         exit(EXIT_FAILURE_CHILD);
     }
 
-    if (close(g_slave_fd) == -1) {
+    if (close_slave_fd() == -1) {
         PERROR("close(slave)");
-        g_slave_fd = -1;
         exit(EXIT_FAILURE_CHILD);
     }
-    g_slave_fd = -1;
 
     // undocumented specification, always argv[argc] == NULL
     execvp(argv[0], argv);
@@ -295,13 +315,13 @@ void child_side(char *argv[])
  * This is because if the parent process keeps the slave fd open,
  * it cannot detect EOF when the child process side closes its end.
  */
-void check_win_size_change()
+static void check_win_size_change()
 {
     if (g_winch_flag) {
         // handle window size change
         struct winsize size_info;
-        if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size_info) == 0) {
-            int fd_slave_for_winsz = open(ptsname(g_master_fd), O_WRONLY | O_NOCTTY);
+        if (ioctl(g_term_fd, TIOCGWINSZ, &size_info) == 0) {
+            int fd_slave_for_winsz = open(ptsname(g_master_fd), O_RDWR | O_NOCTTY);
             if (fd_slave_for_winsz == -1) {
                 PERROR("open(slave for winsz)");
                 exit(EXIT_FAILURE_PARENT);
@@ -309,7 +329,7 @@ void check_win_size_change()
             ioctl(fd_slave_for_winsz, TIOCSWINSZ, &size_info);
             close(fd_slave_for_winsz);
         }
-        g_winch_flag = 0; // reset flag
+        g_winch_flag = FALSE; // reset flag
     }
 }
 
@@ -317,9 +337,9 @@ void check_win_size_change()
  * @brief Handles the parent process side of the pseudo terminal,
  * relaying data between the terminal and the process.
  */
-void parent_side()
+static void parent_side()
 {
-    int is_stdin_closed = 0;
+    int is_stdin_closed = FALSE;
     while (1) {
         check_exit_signal();
         check_win_size_change();
@@ -356,12 +376,46 @@ void parent_side()
         if (!is_stdin_closed && (pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
             if (relay_data(STDIN_FILENO, g_master_fd) == 0) {
                 // EOF or error
-                is_stdin_closed = 1;
+                is_stdin_closed = TRUE;
             }
         }
     }
-    close(g_master_fd);
-    g_master_fd = -1;
+    close_master_fd();
+}
+
+/**
+ * @brief Retrieve the terminal file descriptor.
+ *
+ * @return File descriptor for the terminal, or -1 if no terminal is available.
+ */
+static int get_term_fd() {
+    if (isatty(STDIN_FILENO)) {
+        return STDIN_FILENO;
+    } else if (isatty(STDOUT_FILENO)) {
+        return STDOUT_FILENO;
+    } else if (isatty(STDERR_FILENO)) {
+        return STDERR_FILENO;
+    } else {
+        return -1;
+    }
+}
+
+/**
+ * @brief Sets the terminal to cbreak mode.
+ *
+ * In cbreak mode, input is available immediately without waiting for a newline,
+ * and input characters are not echoed to the terminal.
+ */
+static void set_cbreak_mode()
+{
+    struct termios cbreak_termios = g_orig_termios;
+    cbreak_termios.c_lflag &= ~(ICANON | ECHO);
+    cbreak_termios.c_lflag |= ISIG; // enable signals like SIGINT
+    if (tcsetattr(g_term_fd, TCSANOW, &cbreak_termios) == -1) {
+        PERROR("tcsetattr()");
+        exit(EXIT_FAILURE_PARENT);
+    }
+    g_is_term_restore_needed = TRUE;
 }
 
 /**
@@ -398,45 +452,43 @@ int main(int argc, char *argv[])
         exit(EXIT_SUCCESS);
     }
 
-    struct termios termios = {0};
-    struct winsize size_info = {0};
-    struct termios *p_termios = NULL;
-    struct winsize *p_size_info = NULL;
+    // skip argv[0] (program name)
+    char **arg_start = argv + 1;
 
-    if (isatty(STDIN_FILENO)) {
-        if (tcgetattr(STDIN_FILENO, &termios) == -1) {
-            PERROR("tcgetattr(STDIN)");
-            exit(EXIT_FAILURE_PARENT);
-        }
-        if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size_info) == -1) {
-            PERROR("ioctl(TIOCGWINSZ)");
-            exit(EXIT_FAILURE_PARENT);
-        }
+    g_term_fd = get_term_fd();
 
-        p_termios = &termios;
-        p_size_info = &size_info;
-
-        // save original terminal settings
-        g_orig_termios = termios;
-        g_is_term_restore_needed = 1;
-
-        // set terminal to cbreak mode
-        struct termios cbreak_termios = termios;
-        cbreak_termios.c_lflag &= ~(ICANON | ECHO);
-        cbreak_termios.c_lflag |= ISIG;
-        if (tcsetattr(STDIN_FILENO, TCSANOW, &cbreak_termios) == -1) {
-            PERROR("tcsetattr(STDIN)");
-            exit(EXIT_FAILURE_PARENT);
-        }
+    if (g_term_fd == -1) {
+        // If no terminal is connected,
+        // the pseudo terminal cannot be set up,
+        // so a normal exec is executed.
+        execvp(arg_start[0], arg_start);
+        PERROR("execvp()");
+        exit(EXIT_COMMAND_NOT_FOUND);
     }
 
-    // open pty master/slave and set terminal attributes and window size if attached to a terminal
-    if (openpty(&g_master_fd, &g_slave_fd, NULL, p_termios, p_size_info) == -1) {
+    // retrieve terminal attributes
+    if (tcgetattr(g_term_fd, &g_orig_termios) == -1) {
+        PERROR("tcgetattr()");
+        exit(EXIT_FAILURE_PARENT);
+    }
+
+    // retrieve window size
+    struct winsize size_info;
+    if (ioctl(g_term_fd, TIOCGWINSZ, &size_info) == -1) {
+        PERROR("ioctl(TIOCGWINSZ)");
+        exit(EXIT_FAILURE_PARENT);
+    }
+
+    // set terminal to cbreak mode
+    set_cbreak_mode();
+
+    // open pty master/slave
+    if (openpty(&g_master_fd, &g_slave_fd, NULL, &g_orig_termios, &size_info) == -1) {
         PERROR("openpty()");
         exit(EXIT_FAILURE_PARENT);
     }
 
-    // Set up signal handler (parent process only)
+    // Set up signal handler for window size changes
     struct sigaction sa_winch = {0};
     sa_winch.sa_handler = handle_sigwinch;
     sigemptyset(&sa_winch.sa_mask);
@@ -446,6 +498,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE_PARENT);
     }
 
+    // Set up signal handler for cleanup
     struct sigaction sa_restore = {0};
     sa_restore.sa_handler = handle_exit_signal;
     sigemptyset(&sa_restore.sa_mask);
@@ -474,28 +527,23 @@ int main(int argc, char *argv[])
 
     } else if (pid == 0) {
         // child process side
-        g_in_child = 1; // mark as child side
-        g_is_term_restore_needed = 0; // child does not need to restore terminal
+        g_in_child = TRUE; // mark as child side
+        g_is_term_restore_needed = FALSE; // child does not need to restore terminal
 
-        if (close(g_master_fd) == -1) {
+        if (close_master_fd() == -1) {
             PERROR("close(master)");
-            g_master_fd = -1;
             exit(EXIT_FAILURE_CHILD);
         }
-        g_master_fd = -1;
-        // skip argv[0] (program name)
-        child_side(argv + 1);
+        child_side(arg_start);
         // UNREACHABLE
         exit(EXIT_FAILURE_CHILD);
     }
 
     // parent process side
-    if (close(g_slave_fd) == -1) {
+    if (close_slave_fd() == -1) {
         PERROR("close(slave)");
-        g_slave_fd = -1;
         exit(EXIT_FAILURE_PARENT);
     }
-    g_slave_fd = -1;
 
     parent_side();
 
