@@ -301,7 +301,7 @@ void check_win_size_change()
         // handle window size change
         struct winsize size_info;
         if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size_info) == 0) {
-            int fd_slave_for_winsz = open(ptsname(g_master_fd), O_WRONLY | O_NOCTTY);
+            int fd_slave_for_winsz = open(ptsname(g_master_fd), O_RDWR | O_NOCTTY);
             if (fd_slave_for_winsz == -1) {
                 PERROR("open(slave for winsz)");
                 exit(EXIT_FAILURE_PARENT);
