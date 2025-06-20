@@ -1,4 +1,4 @@
-# fake-tty
+# Fake tty command for Linux
 
 ## Overview
 
@@ -25,11 +25,11 @@ cd fake-tty
 make
 ```
 
-If necessary, move `fake-tty` to a bin directory that is defined in your `PATH` environment variable.
+If necessary, move `fake-tty` to a directory in your `PATH`.
 
 ## Usage
 
-```sh
+```txt
 fake-tty <command> [args...]
 ```
 
