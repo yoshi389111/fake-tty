@@ -16,56 +16,59 @@
  *
  * @copyright Copyright (C) 2002-2025 SATO, Yoshiyuki
  */
-static const char version_info[] = "@(#)$Header: fake-tty 0.5.1 2002-03-18/2025-06-20 yoshi389111 Exp $";
+static const char version_info[] = "@(#)$Header: fake-tty 0.5.2 2002-03-18/2025-06-20 yoshi389111 Exp $";
 
 #define _XOPEN_SOURCE 600 // POSIX.1-2001
 
-#include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h> // for strcasecmp()
+#include <errno.h>
+
+#include <sys/types.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <pty.h>
+#include <signal.h>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/types.h>
 #include <sys/wait.h>
 
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 #define PERROR(msg) do { perror( __FILE__ ":" TOSTRING(__LINE__) ": " msg ); } while (0)
 
+/** @brief Exit code for the parent process. */
 #define EXIT_FAILURE_PARENT 1
+/** @brief Exit code for the child process. */
 #define EXIT_FAILURE_CHILD 2
+/** @brief Exit code for command not found. */
 #define EXIT_COMMAND_NOT_FOUND 127
+/** @brief Buffer size for I/O operations. */
 #define BUFFSIZE 1024
 
-/** Flag for window size change. */
-volatile sig_atomic_t g_winch_flag = 0;
-/** Flag for exit signal. */
-volatile sig_atomic_t g_exit_flag = 0;
-/** Exit signal number. */
-volatile sig_atomic_t g_exit_signo = 0;
+/** @brief Flag for window size change. */
+static volatile sig_atomic_t g_winch_flag = 0;
+/** @brief Flag for exit signal. */
+static volatile sig_atomic_t g_exit_flag = 0;
+/** @brief Exit signal number. */
+static volatile sig_atomic_t g_exit_signo = 0;
 
-/** Original terminal settings for restoring later. */
-struct termios g_orig_termios;
+/** @brief Original terminal settings for restoring later. */
+static struct termios g_orig_termios;
 
-/** Flag indicating whether the terminal needs to be restored. */
-int g_is_term_restore_needed = 0;
+/** @brief Flag indicating whether the terminal needs to be restored. */
+static int g_is_term_restore_needed = 0;
 
-/** master file descriptor, used in cleanup() */
-int g_master_fd = -1;
+/** @brief master file descriptor. */
+static int g_master_fd = -1;
 
-/** slave file descriptor, used in cleanup() */
-int g_slave_fd = -1;
+/** @brief slave file descriptor. */
+static int g_slave_fd = -1;
 
-/** Flag indicating whether the current process is the child process. */
-int g_in_child = 0;
+/** @brief Flag indicating whether the current process is the child process. */
+static int g_in_child = 0;
 
 /**
  * @brief Cleans up file descriptors and restores terminal settings if needed.
@@ -233,7 +236,7 @@ int relay_data(int fd_in, int fd_out)
  *
  * @param argv Command line arguments for execvp().
  */
-void child_side(char* argv[])
+void child_side(char *argv[])
 {
     // new session leader
     if (setsid() == -1) {
@@ -368,7 +371,7 @@ void parent_side()
  * @param argv Argument vector.
  * @return Exit status.
  */
-int main(int argc, char*argv[])
+int main(int argc, char *argv[])
 {
     // ensure cleanup on exit
     atexit(cleanup);
@@ -386,66 +389,32 @@ int main(int argc, char*argv[])
     }
 
     // check version. -V/-v or --version
-    if (strcasecmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
+    if (
+        strcmp(argv[1], "-V") == 0 ||
+        strcmp(argv[1], "-v") == 0 ||
+        strcmp(argv[1], "--version") == 0
+    ) {
         printf("%s\n", version_info);
         exit(EXIT_SUCCESS);
     }
 
-    // open pty-master
-    g_master_fd = posix_openpt(O_RDWR);
-    if (g_master_fd == -1) {
-        PERROR("open(master)");
-        exit(EXIT_FAILURE_PARENT);
-    }
-
-    // grant access to pty-slave
-    if (grantpt(g_master_fd) == -1) {
-        PERROR("grantpt()");
-        exit(EXIT_FAILURE_PARENT);
-    }
-
-    // unlock pty-slave
-    if (unlockpt(g_master_fd) == -1) {
-        PERROR("unlockpt()");
-        exit(EXIT_FAILURE_PARENT);
-    }
-
-    // get pty-slave name
-    char *slave_name = ptsname(g_master_fd);
-    if (slave_name == NULL) {
-        PERROR("ptsname()");
-        exit(EXIT_FAILURE_PARENT);
-    }
-
-    // open pty-slave
-    g_slave_fd = open(slave_name, O_RDWR);
-    if (g_slave_fd == -1) {
-        PERROR("open(slave)");
-        exit(EXIT_FAILURE_PARENT);
-    }
+    struct termios termios = {0};
+    struct winsize size_info = {0};
+    struct termios *p_termios = NULL;
+    struct winsize *p_size_info = NULL;
 
     if (isatty(STDIN_FILENO)) {
-        // copy term info.
-        struct termios termios;
         if (tcgetattr(STDIN_FILENO, &termios) == -1) {
             PERROR("tcgetattr(STDIN)");
             exit(EXIT_FAILURE_PARENT);
         }
-        if (tcsetattr(g_slave_fd, TCSANOW, &termios) == -1) {
-            PERROR("tcsetattr(slave)");
-            exit(EXIT_FAILURE_PARENT);
-        }
-
-        // copy win-size
-        struct winsize size_info;
         if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size_info) == -1) {
             PERROR("ioctl(TIOCGWINSZ)");
             exit(EXIT_FAILURE_PARENT);
         }
-        if (ioctl(g_slave_fd, TIOCSWINSZ, &size_info) == -1) {
-            PERROR("ioctl(slave)");
-            exit(EXIT_FAILURE_PARENT);
-        }
+
+        p_termios = &termios;
+        p_size_info = &size_info;
 
         // save original terminal settings
         g_orig_termios = termios;
@@ -461,9 +430,14 @@ int main(int argc, char*argv[])
         }
     }
 
+    // open pty-master, pty-slave
+    if (openpty(&g_master_fd, &g_slave_fd, NULL, p_termios, p_size_info) == -1) {
+        PERROR("openpty()");
+        exit(EXIT_FAILURE_PARENT);
+    }
+
     // Set up signal handler (parent process only)
-    struct sigaction sa_winch;
-    memset(&sa_winch, 0, sizeof(sa_winch));
+    struct sigaction sa_winch = {0};
     sa_winch.sa_handler = handle_sigwinch;
     sigemptyset(&sa_winch.sa_mask);
     sa_winch.sa_flags = 0;
@@ -472,8 +446,7 @@ int main(int argc, char*argv[])
         exit(EXIT_FAILURE_PARENT);
     }
 
-    struct sigaction sa_restore;
-    memset(&sa_restore, 0, sizeof(sa_restore));
+    struct sigaction sa_restore = {0};
     sa_restore.sa_handler = handle_exit_signal;
     sigemptyset(&sa_restore.sa_mask);
     sa_restore.sa_flags = 0;
