@@ -590,7 +590,6 @@ int main(int argc, char *argv[])
     // check arguments
     if (argc < 2) {
         print_usage_error(argv[0]);
-        // UNREACHABLE
     }
 
     const char *progname = argv[0];
