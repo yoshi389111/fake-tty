@@ -419,6 +419,34 @@ static void set_cbreak_mode()
 }
 
 /**
+ * @brief Prints usage error message and exits.
+ *
+ * @param progname Name of the program.
+ */
+void print_usage_error(const char *progname)
+{
+    fprintf(stderr, "Usage: %s command [args ...]\n", progname);
+    fprintf(stderr, "Try '%s --help' for more information.\n", progname);
+    exit(EXIT_FAILURE_PARENT);
+}
+
+/**
+ * @brief Prints help message for the program.
+ *
+ * @param progname Name of the program.
+ */
+void print_help_message(const char *progname)
+{
+    printf("Usage: %s command [args ...]\n\n", progname);
+    printf("Run a command in a pseudo terminal (pty), so it behaves as if connected to a real terminal.\n");
+    printf("This is useful for commands that require a terminal interface.\n\n");
+    printf("Options:\n");
+    printf("  -h, --help        Show this help message and exit.\n");
+    printf("  -V, -v, --version Show version information and exit.\n");
+    exit(EXIT_SUCCESS);
+}
+
+/**
  * @brief Entry point of the program.
  *
  * @param argc Argument count.
@@ -432,14 +460,17 @@ int main(int argc, char *argv[])
 
     // check arguments
     if (argc < 2) {
-        fprintf(stderr, "usage: %s command [args ...]\n", argv[0]);
-        exit(EXIT_FAILURE_PARENT);
+        print_usage_error(argv[0]);
+        // UNREACHABLE
     }
+
+    const char *progname = argv[0];
+    char **child_args = argv + 1;
 
     // check help. -h or --help
     if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
-        printf("usage: %s command [args ...]\n", argv[0]);
-        exit(EXIT_SUCCESS);
+        print_help_message(progname);
+        // UNREACHABLE
     }
 
     // check version. -V/-v or --version
@@ -452,8 +483,15 @@ int main(int argc, char *argv[])
         exit(EXIT_SUCCESS);
     }
 
-    // skip argv[0] (program name)
-    char **arg_start = argv + 1;
+    if (strcmp(argv[1], "--") == 0) {
+        // skip the first argument if it is "--"
+        child_args++;
+    } else if (strncmp(argv[1], "-", 1) == 0) {
+        // if the first argument starts with "-", it is considered an option
+        fprintf(stderr, "error: invalid option '%s'\n", argv[1]);
+        print_usage_error(progname);
+        // UNREACHABLE
+    }
 
     g_term_fd = get_term_fd();
 
@@ -461,7 +499,7 @@ int main(int argc, char *argv[])
         // If no terminal is connected,
         // the pseudo terminal cannot be set up,
         // so a normal exec is executed.
-        execvp(arg_start[0], arg_start);
+        execvp(child_args[0], child_args);
         PERROR("execvp()");
         exit(EXIT_COMMAND_NOT_FOUND);
     }
@@ -534,7 +572,7 @@ int main(int argc, char *argv[])
             PERROR("close(master)");
             exit(EXIT_FAILURE_CHILD);
         }
-        child_side(arg_start);
+        child_side(child_args);
         // UNREACHABLE
         exit(EXIT_FAILURE_CHILD);
     }
