@@ -587,13 +587,13 @@ int main(int argc, char *argv[])
     // ensure cleanup on exit
     atexit(cleanup);
 
-    // check arguments
-    if (argc < 2) {
-        print_usage_error(argv[0]);
-    }
-
     const char *progname = argv[0];
     char **child_args = argv + 1;
+
+    // check arguments
+    if (argc < 2) {
+        print_usage_error(progname);
+    }
 
     // check help. -h or --help
     if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
