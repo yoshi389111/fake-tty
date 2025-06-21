@@ -219,8 +219,8 @@ static void check_signals()
         }
         // send SIGTSTP to self to stop the parent process
         signal(SIGTSTP, SIG_DFL);
-        raise(SIGTSTP);
         g_sigtstp_flag = FALSE;
+        raise(SIGTSTP);
     }
 
     if (g_sigwinch_flag) {
