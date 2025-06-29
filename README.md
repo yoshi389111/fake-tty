@@ -6,9 +6,9 @@
 
 ## SYNOPSIS
 
-`fake-tty <command> [args...]`
-
-`fake-tty [-h | --help | -v | -V | --version]`
+```shell
+fake-tty [-h | --help | -v | -V | --version] COMMAND [ARGS...]
+```
 
 ## DESCRIPTION
 
@@ -16,10 +16,11 @@
 
 ## OPTIONS
 
-| Option                | Description         |
-|-----------------------|--------------------|
-| \-h, --help           | Show help message  |
-| \-v, \-V, --version   | Show version info  |
+- `-h`, `--help`
+  - Show help message and exit.
+
+- `-v`, `-V`, `--version`
+  - Show version information and exit.
 
 ## EXAMPLES
 
@@ -57,6 +58,4 @@ Move `fake-tty` to a directory in your `PATH` if needed.
 
 MIT License
 
-## AUTHOR
-
-Copyright &copy; 2002-2025 SATO, Yoshiyuki
+&copy; 2002-2025 SATO, Yoshiyuki
