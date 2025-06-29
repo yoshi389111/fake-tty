@@ -16,7 +16,7 @@
  *
  * @copyright Copyright (C) 2002-2025 SATO, Yoshiyuki
  */
-static const char version_info[] = "@(#)$Header: fake-tty 0.7.0 2002-03-18/2025-06-29 yoshi389111 Exp $";
+static const char version_info[] = "@(#)$Header: fake-tty 0.7.1 2002-03-18/2025-06-29 yoshi389111 Exp $";
 
 #define _XOPEN_SOURCE 600 // POSIX.1-2001
 
@@ -82,7 +82,7 @@ static pid_t g_child_pid = -1;
  */
 static void error_usage(const char *progname)
 {
-    fprintf(stderr, "Usage: %s command [args ...]\n", progname);
+    fprintf(stderr, "Usage: %s COMMAND [ARGS ...]\n", progname);
     fprintf(stderr, "Try '%s --help' for more information.\n", progname);
 }
 
@@ -93,7 +93,7 @@ static void error_usage(const char *progname)
  */
 static void show_help(const char *progname)
 {
-    printf("Usage: %s command [args ...]\n\n", progname);
+    printf("Usage: %s COMMAND [ARGS ...]\n\n", progname);
     printf("Run a command in a pseudo terminal (pty), so it behaves as if connected to a real terminal.\n");
     printf("This is useful for commands that require a terminal interface.\n\n");
     printf("Options:\n");
@@ -295,6 +295,45 @@ static void set_term_raw_mode(int term_fd)
     termios.c_cc[VTIME] = 0;
     if (tcsetattr(term_fd, TCSANOW, &termios) == -1) {
         PERROR("tcsetattr()");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/**
+ * @brief Sends an EOF to the master PTY if slave PTY is in canonical mode.
+ */
+static void send_eof_if_canonical()
+{
+    g_slave_fd = open(ptsname(g_master_fd), O_RDWR | O_NOCTTY);
+    if (g_slave_fd == -1) {
+        PERROR("open(ptsname)");
+        exit(EXIT_FAILURE);
+    }
+
+    struct termios termios;
+    if (tcgetattr(g_slave_fd, &termios) == -1) {
+        PERROR("tcgetattr()");
+        exit(EXIT_FAILURE);
+    }
+
+    if (termios.c_lflag & ICANON) {
+        cc_t veof = termios.c_cc[VEOF];
+        while (write(g_master_fd, &veof, 1) == -1) {
+            if (errno == EINTR) {
+                // interrupted by signal, retry
+                continue;
+            } else if (errno == EIO) {
+                // EIO indicates EOF on a pipe or socket
+                break; // EOF
+            } else {
+                PERROR("write()");
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+
+    if (close_slave_fd() == -1) {
+        PERROR("close(slave)");
         exit(EXIT_FAILURE);
     }
 }
@@ -655,6 +694,7 @@ static void parent_mainloop()
             if (relay_data(STDIN_FILENO, g_master_fd) == 0) {
                 // EOF or error
                 is_stdin_closed = TRUE;
+                send_eof_if_canonical();
             }
         }
     }
