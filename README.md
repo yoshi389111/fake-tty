@@ -2,7 +2,7 @@
 
 ## NAME
 
-`fake-tty` \- run a command in a pseudo terminal (pty) for linux
+`fake-tty` - run a command in a pseudo terminal (pty) for linux
 
 ## SYNOPSIS
 
@@ -59,4 +59,4 @@ MIT License
 
 ## AUTHOR
 
-Copyright (c) 2002-2025 SATO, Yoshiyuki
+Copyright &copy; 2002-2025 SATO, Yoshiyuki
